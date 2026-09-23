@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("💰 Client Calculator")
+st.title("💰 GCL Client Calculator")
 st.markdown("Select plan details below")
 
 # Single Life only
