@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("💰 Aviva Client Premium Calculator")
+st.title("💰 Client Calculator")
 st.markdown("Select plan details below")
 
 # Single Life only
