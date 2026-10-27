@@ -213,7 +213,7 @@ st.divider()
 # MANUAL SECTION
 # (keys include loan_type so ranges reset cleanly when the segment changes)
 # ============================================
-st.subheader("🔢 Manual Rate Lookup")
+st.subheader("🔢 Individual Premium Calculator")
 
 col3, col4 = st.columns(2)
 with col3:
@@ -270,7 +270,7 @@ st.divider()
 # ============================================
 head_col, info_col = st.columns([4, 1])
 with head_col:
-    st.subheader("📂 Bulk Rate Lookup")
+    st.subheader("📂 Group Premium Calculator")
 with info_col:
     # Popover = the "popup" for Excel requirements; keeps the page clean.
     with st.popover("ℹ️ Excel format", use_container_width=True):
