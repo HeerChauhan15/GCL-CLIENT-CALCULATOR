@@ -199,10 +199,7 @@ with loader_col:
         value=None,
         step=1.0,
         placeholder="Optional (defaults to 0)",
-        help=(
-            "Optional. Each rate is adjusted as Rate ÷ (1 − Loader%). "
-            "18% GST is then added automatically on top of the premium."
-        ),
+        help="18% GST is added automatically on top of the premium.",
         key="shared_loader_pct"
     )
 loader_pct = loader_pct_input if loader_pct_input is not None else 0.0
