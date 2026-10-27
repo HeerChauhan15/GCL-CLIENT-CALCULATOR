@@ -3,9 +3,6 @@ import pandas as pd
 import numpy as np
 import os
 import re
-from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment
-from openpyxl.utils import get_column_letter
 
 st.set_page_config(
     page_title="GCL Client Calculator",
@@ -16,18 +13,47 @@ st.set_page_config(
 st.title("💰 GCL Client Calculator")
 st.markdown("Select plan details below")
 
-# Single Life only
-FILE_MAP = {
-    ("Level",    "Home Loan"):     "Single-Homeloan-Level.xlsx",
-    ("Level",    "LAP"):           "Single-Lap-Level.xlsx",
-    ("Reducing", "Home Loan"):     "Single-Homeloan-Reducing.xlsx",
-    ("Reducing", "LAP"):           "Single-Lap-Reducing.xlsx",
-    ("Level",    "Personal Loan"): "Single-Personal-Loan- Level.xlsx",
-    ("Reducing", "Personal Loan"): "Single-Personal-Loan- Reducing.xlsx",
-}
-
 # GST is fixed and always applied on top of the Loader-adjusted rate.
 GST_RATE_FIXED = 18.0
+
+# ============================================
+# SEGMENT CONFIG
+# One place to control files, Sum Assured range and Tenure range per loan type.
+# "Level" cover for Vehicle Loan uses VL-Flat.xlsx.
+# ============================================
+SEGMENTS = {
+    "Home Loan": {
+        "files": {"Level": "Single-Homeloan-Level.xlsx", "Reducing": "Single-Homeloan-Reducing.xlsx"},
+        "sa_min": 50000, "sa_max": 6000000, "t_min": 2, "t_max": 25,
+    },
+    "LAP": {
+        "files": {"Level": "Single-Lap-Level.xlsx", "Reducing": "Single-Lap-Reducing.xlsx"},
+        "sa_min": 50000, "sa_max": 4000000, "t_min": 2, "t_max": 10,
+    },
+    "Personal Loan": {
+        "files": {"Level": "Single-Personal-Loan- Level.xlsx", "Reducing": "Single-Personal-Loan- Reducing.xlsx"},
+        "sa_min": 25000, "sa_max": 3000000, "t_min": 2, "t_max": 5,
+    },
+    "Business Loan": {
+        "files": {"Level": "BL- Level.xlsx", "Reducing": "BL- Reducing.xlsx"},
+        "sa_min": 50000, "sa_max": 5000000, "t_min": 2, "t_max": 10,
+    },
+    "Car Loan": {
+        "files": {"Level": "CL- Level.xlsx", "Reducing": "CL-Reducing.xlsx"},
+        "sa_min": 100000, "sa_max": 5000000, "t_min": 2, "t_max": 7,
+    },
+    "Education Loan": {
+        "files": {"Level": "EL- Level.xlsx", "Reducing": "EL- Reducing.xlsx"},
+        "sa_min": 25000, "sa_max": 5000000, "t_min": 2, "t_max": 10,
+    },
+    "Vehicle Loan": {
+        "files": {"Level": "VL-Flat.xlsx", "Reducing": "VL-Reducing.xlsx"},
+        "sa_min": 25000, "sa_max": 500000, "t_min": 2, "t_max": 5,
+    },
+}
+
+AGE_MIN, AGE_MAX = 18, 65
+
 
 # ============================================
 # LOADER + GST FORMULA (applied to every rate before premium is computed):
@@ -44,14 +70,31 @@ def compute_premium_breakdown(base_rate, loader_pct, sum_assured, gst_pct=GST_RA
     return premium_excl_gst, gst_amount, premium_incl_gst
 
 
+def _norm_name(s):
+    return re.sub(r"\s+", "", str(s)).lower()
+
+
+def resolve_file(fname):
+    """Exact match first; otherwise match ignoring spaces/case, so small
+    filename differences (e.g. 'CL-Reducing' vs 'CL- Reducing') don't break."""
+    if os.path.exists(fname):
+        return fname
+    target = _norm_name(fname)
+    for f in os.listdir("."):
+        if _norm_name(f) == target:
+            return f
+    return None
+
+
 def load_rate_table(cover_type, loan_type):
-    fname = FILE_MAP[(cover_type, loan_type)]
-    if not os.path.exists(fname):
+    fname = SEGMENTS[loan_type]["files"][cover_type]
+    path = resolve_file(fname)
+    if path is None:
         raise FileNotFoundError(
             f"File not found: '{fname}' — Please make sure this file is in the GitHub repo."
         )
 
-    raw = pd.read_excel(fname, sheet_name="Sheet1", header=None)
+    raw = pd.read_excel(path, sheet_name="Sheet1", header=None)
 
     header_row = None
     for i, row in raw.iterrows():
@@ -65,7 +108,7 @@ def load_rate_table(cover_type, loan_type):
     if header_row is None:
         raise ValueError("Could not find AGE/TERM header row in the file.")
 
-    df = pd.read_excel(fname, sheet_name="Sheet1", header=header_row)
+    df = pd.read_excel(path, sheet_name="Sheet1", header=header_row)
     df.columns = [str(c).strip() for c in df.columns]
 
     age_col = df.columns[0]
@@ -125,68 +168,69 @@ def find_sum_assured_columns(df):
 # ============================================
 # DROPDOWNS
 # ============================================
-
 col1, col2 = st.columns(2)
 with col1:
-    loan_type = st.selectbox("Select Loan Type", ["Home Loan", "LAP", "Personal Loan"])
+    loan_type = st.selectbox("Select Loan Type", list(SEGMENTS.keys()))
 with col2:
     cover_type = st.selectbox("Select Type of Cover", ["Level", "Reducing"])
 
-# ============================================
-# SHARED LOADER % — applied to every rate (Manual + Bulk)
-# before computing premium. GST @ 18% is then added automatically on top.
-# ============================================
-st.subheader("⚙️ Loader Setting")
-loader_pct_input = st.number_input(
-    "Loader % (optional; GST 18% added automatically)",
-    min_value=0.0,
-    max_value=99.99,
-    value=None,
-    step=1.0,
-    placeholder="Enter loader % (optional, defaults to 0)",
-    key="shared_loader_pct"
+cfg = SEGMENTS[loan_type]
+sa_min, sa_max = cfg["sa_min"], cfg["sa_max"]
+min_tenure, max_tenure = cfg["t_min"], cfg["t_max"]
+
+# Compact summary of the active selection and its limits
+st.caption(
+    f"**{loan_type} · {cover_type} cover** — "
+    f"Sum Assured ₹{sa_min:,} – ₹{sa_max:,} · Tenure {min_tenure} – {max_tenure} yrs · "
+    f"Age {AGE_MIN} – {AGE_MAX}"
 )
-loader_pct = loader_pct_input if loader_pct_input is not None else 0.0
 
 # ============================================
-# SUM ASSURED RANGE — rates in the backend files are per ₹1,00,000
-# Home Loan: ₹50,000 – ₹60,00,000 | LAP: ₹50,000 – ₹40,00,000
-# Personal Loan: ₹25,000 – ₹30,00,000
+# LOADER — applied to every rate (Manual + Bulk). GST @ 18% added on top.
+# Explanation lives in the (?) help tooltip instead of cluttering the page.
 # ============================================
-if loan_type == "Home Loan":
-    sa_min, sa_max = 50000, 6000000
-elif loan_type == "LAP":
-    sa_min, sa_max = 50000, 4000000
-else:  # Personal Loan
-    sa_min, sa_max = 25000, 3000000
+st.subheader("⚙️ Loader")
+loader_col, _ = st.columns([1, 2])
+with loader_col:
+    loader_pct_input = st.number_input(
+        "Loader %",
+        min_value=0.0,
+        max_value=99.99,
+        value=None,
+        step=1.0,
+        placeholder="Optional (defaults to 0)",
+        help=(
+            "Optional. Each rate is adjusted as Rate ÷ (1 − Loader%). "
+            "18% GST is then added automatically on top of the premium."
+        ),
+        key="shared_loader_pct"
+    )
+loader_pct = loader_pct_input if loader_pct_input is not None else 0.0
 
 st.divider()
 
 # ============================================
 # MANUAL SECTION
+# (keys include loan_type so ranges reset cleanly when the segment changes)
 # ============================================
-
 st.subheader("🔢 Manual Rate Lookup")
-
-if loan_type == "Home Loan":
-    min_tenure, max_tenure = 2, 25
-elif loan_type == "LAP":
-    min_tenure, max_tenure = 2, 10
-else:  # Personal Loan
-    min_tenure, max_tenure = 2, 5
 
 col3, col4 = st.columns(2)
 with col3:
-    age = st.number_input("Enter Age", min_value=18, max_value=65, value=30, step=1)
+    age = st.number_input(
+        "Enter Age", min_value=AGE_MIN, max_value=AGE_MAX, value=30, step=1,
+        key=f"age_manual_{loan_type}"
+    )
 with col4:
     tenure = st.number_input(
-        "Enter Tenure",
+        "Enter Tenure (Years)",
         min_value=min_tenure,
         max_value=max_tenure,
         value=min_tenure,
-        step=1
+        step=1,
+        help=f"Tenure in years ({min_tenure} – {max_tenure}).",
+        key=f"tenure_manual_{loan_type}"
     )
-    st.caption("📅 Tenure is in Years")
 
 sum_assured_manual = st.number_input(
     "Select Sum Assured (₹)",
@@ -195,7 +239,7 @@ sum_assured_manual = st.number_input(
     value=sa_min,
     step=1,
     help=f"Enter the exact Sum Assured for this member (₹{sa_min:,} – ₹{sa_max:,}).",
-    key="sa_manual"
+    key=f"sa_manual_{loan_type}"
 )
 
 if st.button("Get Rate", type="primary"):
@@ -224,17 +268,33 @@ st.divider()
 # ============================================
 # EXCEL UPLOAD SECTION
 # ============================================
+head_col, info_col = st.columns([4, 1])
+with head_col:
+    st.subheader("📂 Bulk Rate Lookup")
+with info_col:
+    # Popover = the "popup" for Excel requirements; keeps the page clean.
+    with st.popover("ℹ️ Excel format", use_container_width=True):
+        st.markdown("**Required columns**")
+        st.markdown(
+            "- **Name**\n"
+            "- **Age**\n"
+            "- **Sum Assured** (or **Loan Outstanding** if blank)\n"
+            "- **Tenure** (in years)"
+        )
+        st.markdown("**Limits for current selection**")
+        st.markdown(
+            f"- Loan Type: **{loan_type}** · Cover: **{cover_type}**\n"
+            f"- Sum Assured: ₹{sa_min:,} – ₹{sa_max:,}\n"
+            f"- Tenure: {min_tenure} – {max_tenure} yrs\n"
+            f"- Age: {AGE_MIN} – {AGE_MAX}"
+        )
+        st.caption("Each row uses its own Sum Assured. Rows outside the limits show an ❌ status.")
 
-st.subheader("📂 Upload Member Data for Bulk Rate Lookup")
-
-st.markdown(
-    "Excel needs: **Name**, **Age**, **Sum Assured** (or **Loan Outstanding**), **Tenure** (years)."
+uploaded_file = st.file_uploader(
+    f"Upload Excel File for {loan_type} · {cover_type} cover",
+    type=["xlsx"],
+    help="Rates are picked based on the Loan Type and Type of Cover selected above."
 )
-
-st.caption(f"Uses each row's own Sum Assured (₹{sa_min:,} – ₹{sa_max:,}).")
-st.warning("⚠️ Please make sure you have selected **Loan Type** and **Type of Cover** above before uploading your Excel file.")
-
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file is not None:
     try:
@@ -244,12 +304,7 @@ if uploaded_file is not None:
         st.subheader("Uploaded Data Preview")
         st.dataframe(df.head())
 
-        if loan_type == "Home Loan":
-            min_t, max_t = 2, 25
-        elif loan_type == "LAP":
-            min_t, max_t = 2, 10
-        else:  # Personal Loan
-            min_t, max_t = 2, 5
+        min_t, max_t = min_tenure, max_tenure
 
         df_rates, tenure_map = load_rate_table(cover_type, loan_type)
 
@@ -301,8 +356,8 @@ if uploaded_file is not None:
                 if r_sa is None:
                     raise ValueError("Sum Assured / Loan Outstanding value missing")
 
-                if r_age is None or r_age < 18 or r_age > 65:
-                    raise ValueError("Age must be between 18 and 65")
+                if r_age is None or r_age < AGE_MIN or r_age > AGE_MAX:
+                    raise ValueError(f"Age must be between {AGE_MIN} and {AGE_MAX}")
                 if r_tenure is None or r_tenure < min_t or r_tenure > max_t:
                     raise ValueError(f"Tenure must be between {min_t} and {max_t} yrs")
                 if r_sa < sa_min or r_sa > sa_max:
