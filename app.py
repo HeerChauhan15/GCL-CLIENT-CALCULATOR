@@ -24,7 +24,7 @@ GST_RATE_FIXED = 18.0
 SEGMENTS = {
     "Home Loan": {
         "files": {"Level": "Single-Homeloan-Level.xlsx", "Reducing": "Single-Homeloan-Reducing.xlsx"},
-        "sa_min": 50000, "sa_max": 6000000, "t_min": 2, "t_max": 25,
+        "sa_min": 50000, "sa_max": 6000000, "t_min": 5, "t_max": 25,
     },
     "Lap": {
         "files": {"Level": "Single-Lap-Level.xlsx", "Reducing": "Single-Lap-Reducing.xlsx"},
